@@ -75,7 +75,7 @@ struct ExpoAppIntentsModuleTests {
   /// Each of these is rejected before anything reaches `IntentDonationManager`, so they are safe to run
   /// against the shared registry. The message is checked because a missing function rejects too.
   @Test(arguments: [
-    ("donateIntentAsync('testUnregisteredDonation')", "AppIntentDonationRegistry"),
+    ("donateIntentAsync('testUnregisteredDonation', {})", "AppIntentDonationRegistry"),
     ("donateIntentAsync('testUnregisteredDonation', { count: 1 })", "AppIntentDonationRegistry"),
     ("deleteDonationsAsync({ intent: 'testUnregisteredDonation' })", "AppIntentDonationRegistry"),
     ("deleteDonationsAsync({ ids: ['not an id'] })", "donation id"),
@@ -96,7 +96,6 @@ struct ExpoAppIntentsModuleTests {
   /// Params that do not fit the intent's `DonationParams` record are rejected before anything reaches
   /// `IntentDonationManager`, so these are safe to run against the shared registry too.
   @Test(arguments: [
-    ("donateIntentAsync('testRequiredParamDonation')", "amount"),
     ("donateIntentAsync('testRequiredParamDonation', {})", "amount"),
     ("donateIntentAsync('testRequiredParamDonation', { amount: 'five' })", "amount"),
   ])

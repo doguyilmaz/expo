@@ -1,4 +1,5 @@
 import AppIntents
+import ExpoModulesTestCore
 import Foundation
 import Testing
 
@@ -14,6 +15,29 @@ private func makeDonationIdentifier() throws -> IntentDonationIdentifier {
 
 private func donationId(for identifier: IntentDonationIdentifier) throws -> String {
   return try #require(String(bytes: JSONEncoder().encode(identifier), encoding: .utf8))
+}
+
+/// Donates through `registry` the way the module does: the params are a JavaScript object, which the
+/// registry decodes on the JavaScript actor before the donation builds its intent.
+private func donate(
+  _ registry: AppIntentDonationRegistry,
+  _ name: String,
+  _ params: String,
+  appContext: AppContext
+) async throws -> String {
+  let donation = try await prepareDonation(registry, name, params, appContext: appContext)
+  return try await registry.donate(donation)
+}
+
+@JavaScriptActor
+private func prepareDonation(
+  _ registry: AppIntentDonationRegistry,
+  _ name: String,
+  _ params: String,
+  appContext: AppContext
+) throws -> AppIntentDonationRegistry.PreparedDonation {
+  let runtime = try appContext.runtime
+  return try registry.prepareDonation(name, params: runtime.eval("(\(params))").asObject(), in: runtime)
 }
 
 private struct GreetingIntent: DonatableAppIntent {
@@ -161,7 +185,7 @@ struct AppIntentDonationRegistryTests {
   private let donor: RecordingDonor
   private let entities = AppEntityIdentifierRegistry()
   private let registry: AppIntentDonationRegistry
-  private let appContext = AppContext.create()
+  private let appContext = TestAppContext()
 
   init() throws {
     donor = try RecordingDonor()
@@ -171,7 +195,7 @@ struct AppIntentDonationRegistryTests {
 
   @Test
   func `donating builds the registered intent from the params`() async throws {
-    _ = try await registry.donate("greeting", params: ["greeting": "hello"], appContext: appContext)
+    _ = try await donate(registry, "greeting", "{ greeting: 'hello' }", appContext: appContext)
 
     let donated = try #require(donor.donated.first as? GreetingIntent)
     #expect(donor.donated.count == 1)
@@ -183,7 +207,7 @@ struct AppIntentDonationRegistryTests {
   func `a whole number from JavaScript fills an Int field`() async throws {
     registry.register("addToCounter", as: AddToCounterIntent.self)
 
-    _ = try await registry.donate("addToCounter", params: ["amount": 5.0], appContext: appContext)
+    _ = try await donate(registry, "addToCounter", "{ amount: 5 }", appContext: appContext)
 
     let donated = try #require(donor.donated.first as? AddToCounterIntent)
     #expect(donated.amount == 5)
@@ -196,7 +220,7 @@ struct AppIntentDonationRegistryTests {
     registry.register("addToCounter", as: AddToCounterIntent.self)
 
     let error = await #expect(throws: InvalidDonationParamsException.self) {
-      _ = try await registry.donate("addToCounter", params: [:], appContext: appContext)
+      _ = try await donate(registry, "addToCounter", "{}", appContext: appContext)
     }
 
     let reason = try #require(error?.reason)
@@ -211,7 +235,7 @@ struct AppIntentDonationRegistryTests {
     registry.register("addToCounter", as: AddToCounterIntent.self)
 
     await #expect(throws: InvalidDonationParamsException.self) {
-      _ = try await registry.donate("addToCounter", params: ["amount": "five"], appContext: appContext)
+      _ = try await donate(registry, "addToCounter", "{ amount: 'five' }", appContext: appContext)
     }
     #expect(donor.donated.isEmpty)
   }
@@ -220,14 +244,14 @@ struct AppIntentDonationRegistryTests {
   func `an intent without donation params ignores the params it is given`() async throws {
     registry.register("parameterless", as: ParameterlessIntent.self)
 
-    _ = try await registry.donate("parameterless", params: ["unused": "value"], appContext: appContext)
+    _ = try await donate(registry, "parameterless", "{ unused: 'value' }", appContext: appContext)
 
     #expect(donor.donated.first is ParameterlessIntent)
   }
 
   @Test
   func `a donation id deletes the donation it came from`() async throws {
-    let id = try await registry.donate("greeting", params: [:], appContext: appContext)
+    let id = try await donate(registry, "greeting", "{}", appContext: appContext)
 
     let deleted = try await registry.deleteDonations(matching: .ids([id]))
 
@@ -289,7 +313,7 @@ struct AppIntentDonationRegistryTests {
     registry.register("unbuildable", as: UnbuildableIntent.self)
 
     let error = await #expect(throws: DonationIntentInitException.self) {
-      _ = try await registry.donate("unbuildable", params: [:], appContext: appContext)
+      _ = try await donate(registry, "unbuildable", "{}", appContext: appContext)
     }
 
     let reason = try #require(error?.reason)
@@ -303,21 +327,21 @@ struct AppIntentDonationRegistryTests {
     registry.register("greeting", as: UnbuildableIntent.self)
 
     await #expect(throws: DonationIntentInitException.self) {
-      _ = try await registry.donate("greeting", params: [:], appContext: appContext)
+      _ = try await donate(registry, "greeting", "{}", appContext: appContext)
     }
   }
 
   @Test
   func `donating an unregistered name throws without donating`() async throws {
     await #expect(throws: UnregisteredDonationIntentException.self) {
-      _ = try await registry.donate("missing", params: [:], appContext: appContext)
+      _ = try await donate(registry, "missing", "{}", appContext: appContext)
     }
     #expect(donor.donated.isEmpty)
   }
 
   @Test(arguments: ["", "not an id", "{}", #"{"id":"not a uuid"}"#])
   func `a malformed donation id throws without deleting anything`(id: String) async throws {
-    let valid = try await registry.donate("greeting", params: [:], appContext: appContext)
+    let valid = try await donate(registry, "greeting", "{}", appContext: appContext)
 
     await #expect(throws: InvalidDonationIdentifierException.self) {
       _ = try await registry.deleteDonations(matching: .ids([valid, id]))

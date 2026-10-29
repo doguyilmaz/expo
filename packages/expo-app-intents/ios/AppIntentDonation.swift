@@ -79,11 +79,17 @@ public final class AppIntentDonationRegistry: Sendable {
   public static let shared = AppIntentDonationRegistry()
 
   /// What `register(_:as:)` keeps for one name. The intent type is erased so that intents with
-  /// different `DonationParams` can share the registry, and `makeIntent` keeps the concrete type
-  /// that converting the params needs.
+  /// different `DonationParams` can share the registry, and `prepare` keeps the concrete type that
+  /// decoding the params needs.
   private struct Registration: Sendable {
     let intentType: any AppIntent.Type
-    let makeIntent: @Sendable ([String: Any], AppContext) async throws -> any AppIntent
+    let prepare: @JavaScriptActor @Sendable (borrowing JavaScriptObject, borrowing JavaScriptRuntime) throws -> PreparedDonation
+  }
+
+  /// A donation whose params are decoded, and which builds its intent when it's donated. The params are
+  /// decoded on the JavaScript thread, and the intent is built after the donation leaves it.
+  internal struct PreparedDonation: Sendable {
+    fileprivate let build: @Sendable () async throws -> any AppIntent
   }
 
   /// Registration happens on the main actor from `OnCreate`, while lookups come from the module's
@@ -104,19 +110,23 @@ public final class AppIntentDonationRegistry: Sendable {
   /// type, so when two names are registered for one type, deleting by either name deletes the
   /// donations made under both.
   public func register<Intent: DonatableAppIntent>(_ name: String, as intentType: Intent.Type) {
-    let registration = Registration(intentType: intentType) { params, appContext in
+    let registration = Registration(intentType: intentType) { params, runtime in
       let donationParams: Intent.DonationParams
       do {
-        donationParams = try Intent.DonationParams.from(dictionary: params, appContext: appContext)
+        donationParams = try Intent.DonationParams.decode(params.asValue(), in: runtime)
       } catch {
         throw InvalidDonationParamsException((intent: name, paramsType: "\(Intent.DonationParams.self)")).causedBy(
           error
         )
       }
-      do {
-        return try await Intent(donationParams: donationParams)
-      } catch {
-        throw DonationIntentInitException((intent: name, error: error))
+      // Only `build` uses the decoded params, and a donation is built once.
+      nonisolated(unsafe) let decodedParams = donationParams
+      return PreparedDonation {
+        do {
+          return try await Intent(donationParams: decodedParams)
+        } catch {
+          throw DonationIntentInitException((intent: name, error: error))
+        }
       }
     }
     registrations.withLock {
@@ -124,10 +134,21 @@ public final class AppIntentDonationRegistry: Sendable {
     }
   }
 
-  /// Builds the intent registered as `name` from `params`, donates it, and returns the donation id
-  /// JavaScript can later delete it by.
-  internal func donate(_ name: String, params: [String: Any], appContext: AppContext) async throws -> String {
-    let intent = try await registration(named: name).makeIntent(params, appContext)
+  /// Decodes `params` to the `DonationParams` record of the intent registered as `name`. It reads the
+  /// JavaScript object, so it runs on the JavaScript thread, before the donation leaves it.
+  @JavaScriptActor
+  internal func prepareDonation(
+    _ name: String,
+    params: borrowing JavaScriptObject,
+    in runtime: borrowing JavaScriptRuntime
+  ) throws -> PreparedDonation {
+    return try registration(named: name).prepare(params, runtime)
+  }
+
+  /// Builds the intent of a prepared donation, donates it, and returns the donation id JavaScript can
+  /// later delete it by.
+  internal func donate(_ donation: PreparedDonation) async throws -> String {
+    let intent = try await donation.build()
     return try encode(await donor.donate(intent))
   }
 

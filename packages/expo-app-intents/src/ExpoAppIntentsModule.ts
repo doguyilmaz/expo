@@ -16,7 +16,7 @@ declare class ExpoAppIntentsNativeModule extends NativeModule<ExpoAppIntentsModu
   reindexEntitiesAsync(kind: string | null): Promise<void>;
   getEntityCatalogAsync(kind: string): Promise<AppIntentEntity[]>;
   refreshShortcutsAsync(): Promise<void>;
-  donateIntentAsync(name: string, params?: Record<string, AppIntentJSONValue>): Promise<string>;
+  donateIntentAsync(name: string, params: Record<string, AppIntentJSONValue>): Promise<string>;
   deleteDonationsAsync(filter: AppIntentDonationFilter): Promise<string[]>;
 }
 

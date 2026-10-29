@@ -18,12 +18,26 @@ internal final class ShortcutsRefreshUnavailableException: Exception, @unchecked
   }
 }
 
+@ExpoModule("ExpoAppIntents")
 public final class ExpoAppIntentsModule: Module, @unchecked Sendable {
   private var invocationEventsTask: Task<Void, Never>?
   private var invocationEventsSubscription: AppIntentEventSubscription?
   #if canImport(ExpoUI)
   private var modifierRegistration: AppEntityIdentifierModifierRegistration?
   #endif
+
+  /// The params are a JavaScript object rather than a native dictionary, because only the registration
+  /// of `name` knows the `DonationParams` record to decode them to. The record is decoded before the
+  /// first suspension, while the function still runs on the JavaScript thread.
+  @JS
+  func donateIntentAsync(_ name: String, _ params: borrowing JavaScriptObject) async throws -> String {
+    guard let appContext else {
+      throw Exceptions.AppContextLost()
+    }
+    let runtime = try appContext.runtime
+    let donation = try AppIntentDonationRegistry.shared.prepareDonation(name, params: params, in: runtime)
+    return try await AppIntentDonationRegistry.shared.donate(donation)
+  }
 
   public func definition() -> ModuleDefinition {
     Name("ExpoAppIntents")
@@ -137,15 +151,6 @@ public final class ExpoAppIntentsModule: Module, @unchecked Sendable {
 
     AsyncFunction("refreshShortcutsAsync") { () async throws in
       try await self.refreshShortcuts()
-    }
-
-    AsyncFunction("donateIntentAsync") { (name: String, params: [String: Any]?) async throws -> String in
-      guard let appContext = self.appContext else {
-        throw Exceptions.AppContextLost()
-      }
-      // The registry converts `params` to the `DonationParams` record of the intent registered as
-      // `name`, since only that registration knows the record type.
-      return try await AppIntentDonationRegistry.shared.donate(name, params: params ?? [:], appContext: appContext)
     }
 
     AsyncFunction("deleteDonationsAsync") { (filter: AppIntentDonationFilterRecord) async throws -> [String] in

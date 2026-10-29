@@ -22,13 +22,12 @@ describe('donations when App Intents are available', () => {
     expect(nativeModule.donateIntentAsync.mock.calls[0]).toEqual(['orderFood', params]);
   });
 
-  it('forwards no params when none are given', async () => {
+  it('forwards an empty object when no params are given', async () => {
     nativeModule.donateIntentAsync.mockResolvedValue('donation-id');
 
     await AppIntents.donateIntentAsync('increaseCounter');
 
-    expect(nativeModule.donateIntentAsync.mock.calls[0][0]).toBe('increaseCounter');
-    expect(nativeModule.donateIntentAsync.mock.calls[0][1]).toBeUndefined();
+    expect(nativeModule.donateIntentAsync.mock.calls[0]).toEqual(['increaseCounter', {}]);
   });
 
   it.each([

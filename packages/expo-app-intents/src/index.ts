@@ -298,7 +298,7 @@ export async function donateIntentAsync(
   if (!ExpoAppIntents) {
     return null;
   }
-  return ExpoAppIntents.donateIntentAsync(name, params);
+  return ExpoAppIntents.donateIntentAsync(name, params ?? {});
 }
 
 /**
